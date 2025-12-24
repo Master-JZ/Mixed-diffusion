@@ -1,8 +1,4 @@
 ## Introduction
-This is the code for our CIKM'24 paper: 
-
-**Context Matters: Enhancing Sequential Recommendation with Context-aware Diffusion-based Contrastive Learning**.
-
 The code is implemented based on DDPM (https://github.com/lucidrains/denoising-diffusion-pytorch) and DiffuSeq (https://github.com/Shark-NLP/DiffuSeq). Thanks for their work!
 
 ## Environment Dependencies
@@ -11,7 +7,7 @@ The code is implemented based on DDPM (https://github.com/lucidrains/denoising-d
 
 You can refer to `requirements.txt` for the experimental environment we set to use.
 
-## Run CaDiRec
+## Run Mixed Noise
 Simply use:
 
 `CUDA_VISIBLE_DEVICES=0 python main.py`
@@ -20,15 +16,4 @@ For the ml-1m dataset, the general hyperparameters can be found in configs/cadir
 
 For hyperparameter tuning, please adjust the following parameters (alpha, beta, rho (mlm_probability_train and mlm_probability)) within the range of 0.1 to 0.2 for different datasets.
 
-## Citation
-Please kindly cite our work if you find our paper or codes helpful.
-```
-@inproceedings{cui2024context,
-  title={Context Matters: Enhancing Sequential Recommendation with Context-aware Diffusion-based Contrastive Learning},
-  author={Cui, Ziqiang and Wu, Haolun and He, Bowei and Cheng, Ji and Ma, Chen},
-  booktitle={Proceedings of the 33rd ACM International Conference on Information and Knowledge Management},
-  pages={404--414},
-  year={2024}
-}
-```
 
