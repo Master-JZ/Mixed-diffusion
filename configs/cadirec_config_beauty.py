@@ -1,7 +1,7 @@
 import argparse
-from typing import List
+from typing import List, Optional, Sequence
 
-def get_config():
+def get_config(args_list: Optional[Sequence[str]] = None):
     parser = argparse.ArgumentParser()
     #************SASRec*******************
     parser.add_argument('--gpu_id', type=int, default=0, help='gpu')
@@ -83,4 +83,4 @@ def get_config():
     parser.add_argument("--emb_scale_factor", type=float, default=1.0)
 
 
-    return parser.parse_args()
+    return parser.parse_args(args_list)

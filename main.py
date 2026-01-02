@@ -49,7 +49,8 @@ def setup_logging(args, args_str):
         handlers=[
             logging.FileHandler(log_path, mode="w", encoding="utf-8"),
             logging.StreamHandler()  # 继续在命令行显示 logging 的内容
-        ]
+        ],
+        force=True,  # 允许在多次实验时重置 logging handlers
     )
 
     logging.info(f"Logging to {log_path}")
@@ -64,7 +65,6 @@ def setup_logging(args, args_str):
 
 if __name__ == "__main__":
     main()
-
 
 
 

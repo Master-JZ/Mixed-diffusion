@@ -1,3 +1,4 @@
+import os
 import sys
 sys.path.append('./')
 import time
@@ -21,6 +22,8 @@ class Trainer:
         self.args = args
         self.device = device
         self.start_epoch = 0    # define the start epoch for keepon trainingzhonss
+        self.best_valid_score = None
+        self.best_test_score = None
 
         self.loss_func = torch.nn.BCEWithLogitsLoss()
         self.generator = generator
@@ -148,8 +151,10 @@ class Trainer:
         print("********** Running training **********")
         train_time = []
         early_stopping = EarlyStopping(self.args.checkpoint_path, patience=40, verbose=True)
-   
+        last_epoch = self.start_epoch
+
         for epoch in trange(self.start_epoch, self.start_epoch + int(self.args.epochs), desc="Epoch"):
+            last_epoch = epoch
             t = self._train_one_epoch(epoch, only_bert_train=False, is_diffusion_train=True)
             train_time.append(t) 
             
@@ -166,7 +171,26 @@ class Trainer:
                 # self.eval(epoch, test=False)  #valid
                 
                 # self.eval(epoch, test=True)  #test
-            
+
+        if early_stopping.best_score is not None:
+            self.best_valid_score = early_stopping.best_score
+
+            if os.path.exists(self.args.checkpoint_path):
+                state_dict = torch.load(self.args.checkpoint_path, map_location=self.device)
+                self.model.load_state_dict(state_dict)
+            else:
+                print(f"[Train] Expected checkpoint at {self.args.checkpoint_path} not found; skipping reload.")
+
+            try:
+                self.best_test_score = self.eval(epoch=last_epoch, test=True)
+            except Exception as e:
+                print(f"[Train] Failed to evaluate the best checkpoint on the test set: {e}")
+
+        return {
+            "best_valid_score": self.best_valid_score,
+            "best_test_score": self.best_test_score,
+        }
+    
     
     def eval(self, epoch, test=False):
       
