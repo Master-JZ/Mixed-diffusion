@@ -48,42 +48,16 @@ class DataGenerator(object):
         self.item_size = self.max_item + 2
         self.mask_id = self.max_item + 1
         self.args.item_size = self.item_size
+        #12.26加、长尾实验相关
+        if getattr(self.args, "enable_bucket_eval", True):
+            self.item_bucket_map, self.bucket_statistics = self._build_item_buckets(self.user_seq)
+        else:
+            self.item_bucket_map, self.bucket_statistics = {}, {}
         
         self.train_dataset = SASRecDataset(self.args, self.user_seq, data_type="train")
         self.valid_dataset = SASRecDataset(self.args, self.user_seq, data_type="valid")
         self.test_dataset = SASRecDataset(self.args, self.user_seq, data_type="test")
-##################################
-        # random.seed(42)
-        # p = self.args.mlm_probability_train
-        # num_samples = min(2000, len(self.train_dataset))  # 抽 2000 条看看就够
-        # total_nonpad = 0           # 所有非 PAD token 数
-        # total_masked = 0           # 被 mask 的非 PAD token 数
-        # total_long = 0             # 所有非 PAD token 中属于长尾的数量
-        # total_long_masked = 0      # 被 mask 的 token 中属于长尾的数量
-        # for idx in range(num_samples):
-        #     d = self.train_dataset[idx]
-        #     input_ids = d["input_ids"].tolist()
-        #     mask = d["masked_indices0"].tolist()  # 就是你的 mask_indices 输出
-        #     for tok, m in zip(input_ids, mask):
-        #         if tok == 0:
-        #             continue  # 跳过 PAD
-        #         total_nonpad += 1
-        #         if tok in self.train_dataset.long_tail_items:
-        #             total_long += 1
-        #         if m:  # 被 mask
-        #             total_masked += 1
-        #             if tok in self.train_dataset.long_tail_items:
-        #                 total_long_masked += 1
-        # # 1) 整体 mask 比例
-        # overall_mask_ratio = total_masked / total_nonpad if total_nonpad > 0 else 0.0
-        # # 2) 长尾在“所有 token”中的比例
-        # long_ratio_all = total_long / total_nonpad if total_nonpad > 0 else 0.0
-        # # 3) 长尾在“被 mask 的 token”中的比例
-        # long_ratio_masked = total_long_masked / total_masked if total_masked > 0 else 0.0
-        # print(f"整体 mask 比例 (非 PAD): {overall_mask_ratio:.4f}  (期望 p = {p})")
-        # print(f"全体 token 中长尾占比   : {long_ratio_all:.4f}")
-        # print(f"被 mask 的 token 中长尾占比: {long_ratio_masked:.4f}")
-###################################
+
         self.train_dataloader = self.make_train_dataloader()
         self.valid_dataloader = self.make_valid_dataloader()
         self.test_dataloader = self.make_test_dataloader()
@@ -116,6 +90,49 @@ class DataGenerator(object):
                                         drop_last=True) 
         return test_dataloader
     
+    #长尾实验12.26
+    def _build_item_buckets(self, user_seq):
+        """
+        Build a Head/Mid/Tail bucket mapping based on training-set item frequencies.
+        Buckets are split by cumulative interaction ratio: 20% for Head, next 40% for Mid, rest for Tail.
+        """
+        counter = Counter()
+        for seq in user_seq:
+            # training interactions exclude the last two items (reserved for valid/test)
+            for item in seq[:-2]:
+                if item > 0:
+                    counter[item] += 1
+
+        if not counter:
+            return {}, {}
+
+        total_freq = sum(counter.values())
+        # ensure non-zero thresholds to avoid empty buckets on tiny datasets
+        head_boundary = max(1, math.ceil(total_freq * 0.2))
+        mid_boundary = max(head_boundary + 1, math.ceil(total_freq * 0.4))
+
+        sorted_items = counter.most_common()
+        bucket_map = {}
+        bucket_freqs = {"head": 0, "mid": 0, "tail": 0}
+        cumulative = 0
+        for item, freq in sorted_items:
+            if cumulative < head_boundary:
+                bucket = "head"
+            elif cumulative < mid_boundary:
+                bucket = "mid"
+            else:
+                bucket = "tail"
+            bucket_map[item] = bucket
+            bucket_freqs[bucket] += freq
+            cumulative += freq
+
+        bucket_statistics = {
+            "total_interactions": total_freq,
+            "unique_items": len(counter),
+            "frequency_by_bucket": bucket_freqs,
+        }
+        return bucket_map, bucket_statistics
+
     
 class SASRecDataset(Dataset):
     def __init__(self, args, user_seq, test_neg_items=None, data_type="train"):
@@ -169,7 +186,7 @@ class SASRecDataset(Dataset):
         """
         p:表示整体的mask比例，应该是
         """
-        mask_indices = []
+        # mask_indices = []
         # for token in input_ids:
         #     if token == 0:
         #         mask_indices.append(0)  # 元素为0的位置不参与mask

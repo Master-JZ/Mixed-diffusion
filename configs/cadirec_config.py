@@ -1,7 +1,7 @@
 import argparse
-from typing import List
+from typing import List, Optional, Sequence
 
-def get_config():
+def get_config(args_list: Optional[Sequence[str]] = None):
     parser = argparse.ArgumentParser()
     #************SASRec*******************应该用的都是这个
     parser.add_argument('--gpu_id', type=int, default=1, help='gpu')
@@ -12,9 +12,9 @@ def get_config():
     parser.add_argument("--output_dir", default="./saved_models/", help="save the model")
     parser.add_argument("--check_path", default='', type=str,help="the save path of checkpoints for different running")
     parser.add_argument('--epochs', type=int, default=500, help='Number of training epochs')    #400
-    parser.add_argument('--warm_up_epochs', type=int, default=-1, help='Number of warmup epochs')
+    parser.add_argument('--warm_up_epochs', type=int, default=10, help='Number of warmup epochs')   #-1
     parser.add_argument('--filter_num', type=int, default=5, help='filter_num')
-    parser.add_argument('--train_batch_size', type=int, default=256, help='Batch size for training')
+    parser.add_argument('--train_batch_size', type=int, default=256, help='Batch size for training')    #256
     parser.add_argument('--test_batch_size', type=int, default=512, help='Batch size for testing')
     parser.add_argument('--learning_rate', type=float, default=0.001, help='Learning rate')
     parser.add_argument('--weight_decay', type=float, default=0, help='Weight decay')
@@ -32,8 +32,8 @@ def get_config():
     parser.add_argument('--loss_type', type=str, default='BPR', help='Type of loss function')
     parser.add_argument('--max_seq_length', type=int, default=50, help='max sequence length')
     
-    parser.add_argument('--temperature', type=float, default=1.0, help='temperature for nce loss')
-    parser.add_argument('--seed', type=int, default=2024, help='random seed')
+    parser.add_argument('--temperature', type=float, default=1.0, help='temperature for nce loss')  #1.0
+    parser.add_argument('--seed', type=int, default=2025, help='random seed')   #2024
     
 
     # #*************Diffusion***************
@@ -57,8 +57,14 @@ def get_config():
     parser.add_argument('--gamma', type=float, default=0, help='ratio of diffusion mse loss') #0
     parser.add_argument('--mlm_probability_train', type=float, default=0.1, help='mlm_probability for train')   #mask ratio 0.2. 0.1 is better
     parser.add_argument('--mlm_probability', type=float, default=0.1, help='mlm_probability')
-    
-    parser.add_argument("--batch_size", type=int, default=256)
+    #长尾实验
+    parser.add_argument('--enable_bucket_eval', dest='enable_bucket_eval', action='store_true',
+                        help='Enable Head/Mid/Tail bucket mapping and per-bucket metrics')
+    parser.add_argument('--disable_bucket_eval', dest='enable_bucket_eval', action='store_false',
+                        help='Disable Head/Mid/Tail bucket mapping and run only overall metrics')
+    parser.set_defaults(enable_bucket_eval=False)   #需要分head mid tail跑实验就改成True
+
+    parser.add_argument("--batch_size", type=int, default=256) #256
     parser.add_argument("--microbatch", type=int, default=0)
     parser.add_argument("--ema_rate", type=float, default=1.0)
     parser.add_argument("--resume_checkpoint", default="none")
@@ -83,4 +89,4 @@ def get_config():
     parser.add_argument("--emb_scale_factor", type=float, default=1.0)
 
 
-    return parser.parse_args()
+    return parser.parse_args(args_list)

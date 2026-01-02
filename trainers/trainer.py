@@ -1,3 +1,4 @@
+import os
 import sys
 sys.path.append('./')
 import time
@@ -10,7 +11,8 @@ import torch
 from tqdm import tqdm, trange
 from models.cadirec import CaDiRec 
 from models.gaussian_diffusion import SpacedDiffusion,space_timesteps
-from utils import get_full_sort_score, EarlyStopping
+from utils import get_full_sort_score, EarlyStopping, recall_at_k, ndcg_k
+import json
 from models import gaussian_diffusion as gd
 from .step_sample import UniformSampler
 import logging
@@ -32,6 +34,8 @@ class Trainer:
         self.generator = generator
         #new
         self.logger = getattr(args, "logger", None)
+        self.best_valid_score = None
+        self.best_test_score = None
         
         self._create_model()
         self._set_optimizer()
@@ -96,7 +100,8 @@ class Trainer:
                 t,
                 input_ids,
                 masked_indices0.long(), 
-                attention_mask
+                attention_mask,  #消融context-aware
+                # None,
             )
             
             diff_mse_loss, diff_nll_loss, aug_seq1, aug_seq2 = compute_losses()
@@ -125,6 +130,8 @@ class Trainer:
 
         
             loss.backward()
+            #gpt suggestion 12.24
+            # torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
             self.optimizer.step()
             
             tr_diff_loss += diff_nll_loss / len(self.train_dataloader)
@@ -148,8 +155,10 @@ class Trainer:
         print("********** Running training **********")
         train_time = []
         early_stopping = EarlyStopping(self.args.checkpoint_path, patience=40, verbose=True)
+        last_epoch = self.start_epoch #grid search
    
         for epoch in trange(self.start_epoch, self.start_epoch + int(self.args.epochs), desc="Epoch"):
+            last_epoch = epoch #grid search
             t = self._train_one_epoch(epoch, only_bert_train=False, is_diffusion_train=True)
             train_time.append(t) 
             
@@ -166,7 +175,93 @@ class Trainer:
                 # self.eval(epoch, test=False)  #valid
                 
                 # self.eval(epoch, test=True)  #test
-            
+        
+        #grid search to this end
+        if early_stopping.best_score is not None:
+            self.best_valid_score = early_stopping.best_score
+
+            if os.path.exists(self.args.checkpoint_path):
+                state_dict = torch.load(self.args.checkpoint_path, map_location=self.device)
+                self.model.load_state_dict(state_dict)
+            else:
+                print(f"[Train] Expected checkpoint at {self.args.checkpoint_path} not found; skipping reload.")
+
+            try:
+                self.best_test_score = self.eval(epoch=last_epoch, test=True)
+            except Exception as e:
+                print(f"[Train] Failed to evaluate the best checkpoint on the test set: {e}")
+
+        return {
+            "best_valid_score": self.best_valid_score,
+            "best_test_score": self.best_test_score,
+        }
+    
+    #长尾实验
+    def _compute_full_metrics(self, labels, pred_list, topks=None):
+        topks = topks or [5, 10, 15, 20]
+        metrics = {}
+        for k in topks:
+            metrics[f"HIT@{k}"] = recall_at_k(labels, pred_list, k)
+            metrics[f"NDCG@{k}"] = ndcg_k(labels, pred_list, k)
+        return metrics
+
+    def _bucket_scores(self, labels, pred_list):
+        bucket_map = getattr(self.generator, "item_bucket_map", None)
+        if not bucket_map:
+            return {}
+
+        bucket_data = {
+            "head": {"labels": [], "preds": []},
+            "mid": {"labels": [], "preds": []},
+            "tail": {"labels": [], "preds": []},
+        }
+
+        for answer, preds in zip(labels, pred_list):
+            # label comes from [[item]], keep compatibility if format changes
+            label_item = answer[0] if isinstance(answer, (list, tuple, np.ndarray)) else answer
+            bucket = bucket_map.get(label_item)
+            if bucket in bucket_data:
+                bucket_data[bucket]["labels"].append(answer)
+                bucket_data[bucket]["preds"].append(preds)
+
+        bucket_scores = {}
+        for bucket, data in bucket_data.items():
+            if not data["labels"]:
+                bucket_scores[bucket] = {
+                    "count": 0,
+                    "metrics": {},
+                }
+                continue
+            metrics = self._compute_full_metrics(data["labels"], data["preds"])
+            bucket_scores[bucket] = {
+                "count": len(data["labels"]),
+                "metrics": metrics,
+            }
+        return bucket_scores
+
+    def _log_bucket_scores(self, epoch, split, bucket_scores):
+        if not bucket_scores:
+            logging.info("epoch=%d  %s  bucket metrics unavailable (no mapping or empty buckets)", epoch, split)
+            return
+
+        for bucket, data in bucket_scores.items():
+            # metrics_str = "  ".join([f"{k}={v:.4f}" for k, v in data["metrics"].items()])
+            metrics = data["metrics"]
+            if metrics:
+                metrics_str = "  ".join([f"{k}={v:.4f}" for k, v in metrics.items()])
+            else:
+                metrics_str = "no samples"
+            print(f"[{split}] Bucket={bucket.upper()} (count={data['count']}): {metrics_str}")
+            logging.info(
+                "epoch=%d  %s  bucket=%s  count=%d  metrics=%s",
+                epoch,
+                split,
+                bucket.upper(),
+                data["count"],
+                # json.dumps(data["metrics"], ensure_ascii=False),
+                json.dumps(metrics if metrics else {}, ensure_ascii=False),
+            )
+    #长尾实验
     
     def eval(self, epoch, test=False):
       
@@ -206,19 +301,25 @@ class Trainer:
         #新增输出 
         # get_full_sort_score(epoch, labels, pred_list)
         split = "VALID" if not test else "TEST"
-        score = get_full_sort_score(epoch, labels, pred_list)
+        # score = get_full_sort_score(epoch, labels, pred_list)
+        #长尾 12.26
+        score = get_full_sort_score(epoch, labels, pred_list, split=split)
+        bucket_scores = self._bucket_scores(labels, pred_list)
+        self._log_bucket_scores(epoch, split, bucket_scores)
 
         #new, about log
         if score is not None:
             try:
                 hit10, ndcg10 = float(score[0]), float(score[1])
-                tag = "VALID" if not test else "TEST"
+                # tag = "VALID" if not test else "TEST" #12.26长尾
                 logging.info(
                     "epoch=%d  %s  HIT@10=%.4f  NDCG@10=%.4f",
-                    epoch, tag, hit10, ndcg10
+                    # epoch, tag, hit10, ndcg10 #12.26 长尾
+                    epoch, split, hit10, ndcg10
                 )
             except Exception as e:
                 # 这里简单保护一下：万一 score 不是你预期的形状，就先不写 log，防止报错
-                logging.info(f"epoch={epoch}  ({'VALID' if not test else 'TEST'}) logging skipped, score={score}, error={e}")
+                # logging.info(f"epoch={epoch}  ({'VALID' if not test else 'TEST'}) logging skipped, score={score}, error={e}") #12.26长尾
+                logging.info(f"epoch={epoch}  ({split}) logging skipped, score={score}, error={e}")
 
         return score

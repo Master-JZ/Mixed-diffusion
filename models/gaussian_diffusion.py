@@ -310,8 +310,10 @@ class GaussianDiffusion:
         B, C = x.size(0), x.size(-1)
         assert t.shape == (B,)
         # print(x.shape)
-        model_output = model.model.diffusion_reverse(x, self._scale_timesteps(t), attention_mask)
-        
+        model_output = model.model.diffusion_reverse(x, self._scale_timesteps(t), attention_mask)   #消融context-aware
+        # attn = th.ones(x.size(0), x.size(1), device=x.device, dtype=th.float)
+        # model_output = model.model.diffusion_reverse(x, self._scale_timesteps(t), attention_mask=attn)
+
         # for fixedlarge, we set the initial (log-)variance like so
         # to get a better decoder log likelihood.
         model_variance = np.append(self.posterior_variance[1], self.betas[1:])
@@ -640,7 +642,9 @@ class GaussianDiffusion:
         terms = {}
         # **************mse loss*******************
         target = x_start
-        model_output = model.model.diffusion_reverse(x_t, self._scale_timesteps(t), attention_mask)  
+        model_output = model.model.diffusion_reverse(x_t, self._scale_timesteps(t), attention_mask)  #消融context-aware
+        # attn = th.ones_like(input_ids_mask, dtype=th.float, device=x_t.device)
+        # model_output = model.model.diffusion_reverse(x_t, self._scale_timesteps(t), attention_mask=attn)
         assert model_output.shape == target.shape == x_start.shape
         
         # terms["mse"] = mean_flat((target - model_output) ** 2)
